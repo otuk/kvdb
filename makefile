@@ -16,7 +16,6 @@ clean:
 	rm -f ./$(TARGET)
 	rm -f ./*.o
 
-
 cleand: clean
 	rm -f ./*.db
 
@@ -25,3 +24,7 @@ memchk: all
 
 run:
 	./$(TARGET)
+
+# add install
+# add debug differences
+# add optimizer differences
