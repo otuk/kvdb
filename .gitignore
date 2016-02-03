@@ -1,3 +1,4 @@
 *.dSYM
 *.o
 *~
+test_kvdb

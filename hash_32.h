@@ -65,7 +65,7 @@
  */
 
 #include <stdlib.h>
-
+#include <stdint.h>
 
 /*
  * 32 bit FNV-0 hash type
