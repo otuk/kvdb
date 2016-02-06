@@ -36,26 +36,29 @@ static kvhdr_s* g_kv_hdr;
 
 // initialize and write db header info to file
 static void init_kvhdr(kvhdr_s* mdat, dbsize esize, uint16_t keysize,
-		       uint16_t valsize, uint32_t maxecount, uint16_t maxscount){
-  g_kv_hdr = mdat;
-  g_kv_hdr->esize = esize;
-  g_kv_hdr->keysize = keysize;
+		       uint16_t valsize, uint32_t maxecount,
+		       uint16_t maxscount){
+  g_kv_hdr = mdat;  // start of mapped memory
+  g_kv_hdr->esize = esize; // hash max size 
+  g_kv_hdr->keysize = keysize; 
   g_kv_hdr->valsize = valsize;
-  g_kv_hdr->ecount = 0;
-  g_kv_hdr->scount = 0;
-  g_kv_hdr->maxecount = maxecount;
-  g_kv_hdr->maxscount = maxscount;
+  g_kv_hdr->ecount = 0; //current stored element count
+  g_kv_hdr->scount = 0; //available deleted location count 
+  g_kv_hdr->maxecount = maxecount; //max db storage allowance
+  g_kv_hdr->maxscount = maxscount; //max delete stack allowance 
 }
 
 
 // calculates the constants to be used for memory access
-static void calculate_constants(dbsize size, uint16_t keysize, uint16_t valsize){
+static void calculate_constants(dbsize size, uint16_t keysize,
+				uint16_t valsize){
   //printf( "size of dbsize is %u\n", (uint32_t) sizeof(dbsize));
   //printf( "size of k index is %u\n", (uint32_t) sizeof(kidx_s));
   //printf( "size of kvhdr_s is %u\n", (uint32_t) sizeof(kvhdr_s));
   OFFSET_KIDX = sizeof(kvhdr_s);
   OFFSET_STACK = (size * sizeof(kidx_s)) + OFFSET_KIDX;
-  OFFSET_KV = (DEL_STACK_FACTOR * size *  sizeof(kidx_s)) + OFFSET_STACK;
+  OFFSET_KV = (DEL_STACK_FACTOR * size *  sizeof(kidx_s))
+              + OFFSET_STACK;
   KVR_SIZE =  sizeof(uint32_t)  //kv_s struct
             + sizeof(uint32_t)
             + (sizeof(char) * keysize)
@@ -68,25 +71,18 @@ static kvdb_s* initialize_db_artifacts(const char* name, int fd,
 				       kvdata_s* mdat, uint16_t keysize,
 				       uint16_t valsize, dbsize size){
   kvdb_s* db_m = malloc(sizeof(kvdb_s));
-  HANDLE(!db_m, 'y', return NULL, "Cannot allocate memory for kvdb_s.\n");
-  //  int lerr = errno;
-  //if(!db_m){
-  //  EMSG(lerr, "Cannot allocate memory for kvdb_s.\n");
-  //  return NULL;
-  //}
+  HANDLE(!db_m, 0, return NULL,
+	 "Cannot allocate memory for kvdb_s.\n");
   db_m->name = strdup(name);
   db_m->keysize = keysize;
   db_m->valsize = valsize;
   kvdata_s* data_m = malloc(sizeof(kvdata_s));
-  int lerr = errno;
-  if(!data_m){
-    EMSG(lerr, "Cannot allocate memory for kvdb data_m.\n");
-    return NULL;
-  }
+  HANDLE(!data_m, 0, return NULL,
+	 "Cannot allocate memory for kvdb data_m.\n");
   db_m->data = data_m;   
 
   data_m->fd = fd;
-  data_m->esize = size;  //?? why 0 in dgb
+  data_m->esize = size;
   data_m->mdat = mdat;
   return db_m;
 }
@@ -107,14 +103,16 @@ kvdb_s* create_kvdb(const char* name, dbsize size,
   ftruncate(fd, len);
 
   void* mdat = mmap(NULL, len,
-		    PROT_READ | PROT_WRITE, MAP_FILE | MAP_SHARED, fd, 0);
+		    PROT_READ | PROT_WRITE, MAP_FILE | MAP_SHARED,
+		    fd, 0);
   HANDLE(mdat == MAP_FAILED, 0, return NULL,
 	 "Cannot map memory for kvdb data_m.\n");
   
   kvdb_s* db_m = initialize_db_artifacts(name, fd, mdat, keysize, valsize, size);
   kvdata_s* data_m= db_m->data;
   init_kvhdr(data_m->mdat, data_m->esize, keysize, valsize,
-	     DB_SIZE_FACTOR * data_m->esize, DEL_STACK_FACTOR * data_m->esize );
+	     DB_SIZE_FACTOR * data_m->esize,
+	     DEL_STACK_FACTOR * data_m->esize );
 
   return db_m;  
 }
@@ -142,17 +140,22 @@ kvdb_s* load_kvdb(const char* name){
 	 "%s is not a normal file\n", name);
 
   void* mdat =  mmap(NULL, sb.st_size,
-		     PROT_READ | PROT_WRITE, MAP_FILE | MAP_SHARED, fd, 0);
+		     PROT_READ | PROT_WRITE, MAP_FILE | MAP_SHARED,
+		     fd, 0);
   HANDLE(mdat == MAP_FAILED, 0, return NULL,
 	 "Cannot map memory for kvdb data_m.\n");
   
   read_into_header(mdat);
-  calculate_constants(g_kv_hdr->esize, g_kv_hdr->keysize, g_kv_hdr->valsize);
-  kvdb_s* db_m = initialize_db_artifacts(name, fd, mdat, g_kv_hdr->keysize,
-					 g_kv_hdr->valsize,  g_kv_hdr->esize);
+  calculate_constants(g_kv_hdr->esize, g_kv_hdr->keysize,
+		      g_kv_hdr->valsize);
+  kvdb_s* db_m = initialize_db_artifacts(name, fd, mdat,
+					 g_kv_hdr->keysize,
+					 g_kv_hdr->valsize,
+					 g_kv_hdr->esize);
 
   return db_m;  
 }
+
 
 
 /*
@@ -178,10 +181,12 @@ int disconnect_kvdb(kvdb_s* db_m){
     }
     free((void*) db_m);
   }
+
   return 1;
 }
 
 
+//
 static void add_hdr_count(){
   g_kv_hdr->ecount++;
 }
@@ -206,14 +211,21 @@ static char* get_mdat(kvdb_s* db_m){
 }
 
 
-//refit has to maximum index sie for db //TODO use header????
-static uint32_t resize_hash(kvdb_s* db_m, uint32_t hash){
-  //printf("has value %u, %X\n", hash, hash);
-  kvdata_s* kvd = (kvdata_s*) db_m->data;
-  //printf("esize %d\n",kvd->esize);
-  hash %= kvd->esize;
+//refit has to maximum index sie for db 
+inline static uint32_t resize_hash(uint32_t hash){
+  hash %= g_kv_hdr->esize;
   //printf("has value %u, %X\n", hash, hash);
   return hash;
+}
+
+
+inline static char* get_key_ptr(kv_s* ckv){
+  return (char*) ckv + 2*sizeof(uint32_t); 
+}
+
+
+inline static char* get_val_ptr(kv_s* ckv){
+  return get_key_ptr(ckv) + g_kv_hdr->keysize;  
 }
 
 
@@ -223,10 +235,8 @@ static void write_newkv(kv_s* newkv,
 			uint32_t prev){
   newkv->prev = prev;
   newkv->next = 0;
-  strncpy((char*) newkv + 2*sizeof(uint32_t),
-	  key, g_kv_hdr->keysize);
-  strncpy((char*) newkv + 2*sizeof(uint32_t) + g_kv_hdr->keysize,
-	  val, g_kv_hdr->valsize);
+  strncpy(get_key_ptr(newkv), key, g_kv_hdr->keysize);
+  strncpy(get_val_ptr(newkv), val, g_kv_hdr->valsize);
   add_hdr_count();   
 }
 
@@ -245,11 +255,8 @@ static int is_hash_already_populated(char* mdat, uint32_t hash){
 
 
 //
-static int del_stack_exists(){
-  if (g_kv_hdr->scount > 0)
-    return 1;
-  else
-    return 0;
+inline static int del_stack_exists(){
+  return  g_kv_hdr->scount > 0 ? 1: 0;
 }
 
 
@@ -258,27 +265,31 @@ static uint32_t get_deleted_location_offset(char* mdat){
   // pick up the last stack content
   kidx_s* lds =(kidx_s*) (mdat + OFFSET_STACK +
 			  g_kv_hdr->scount * sizeof(kidx_s));
-  uint32_t kvloc = lds->idx; 
+  uint32_t kvlocoffset = lds->idx; 
   // reduce stack count
   g_kv_hdr->scount--;
   //also set last stack to 0
   lds->idx = 0;
-  return kvloc;
+  return kvlocoffset;
 }
 
 
 // call this to get where to write the key-value record 
 static uint32_t get_kv_offset(char* mdat){
   if(del_stack_exists()){
+    //first reuse any location that was deleted
     return get_deleted_location_offset(mdat);
   }else{
-    return get_kv_fa_offset();  // write this to index
+    // nodeletions, then get the first available kv offset
+    return get_kv_fa_offset();  
   }
 }
 
+
 //
-static int check_keys_match(kv_s* lkv, const char* key){
-  return (0==strncmp(key, (char*) lkv + 2*sizeof(uint32_t), g_kv_hdr->keysize)) ? 1: 0;
+inline static int check_keys_match(kv_s* lkv, const char* key){
+  return (0==strncmp(key, get_key_ptr(lkv),
+		     g_kv_hdr->keysize)) ? 1: 0;
 }
 
 
@@ -288,6 +299,9 @@ static uint32_t get_last_kv_offset(char* mdat, const char* key,
   //either return last kv offset or return 0 if key exists
   kv_s* lkv = NULL;
   uint32_t intkvoffset = currkvoffset;
+  // follow the kv chain to the end
+  // but return 0 if there is a matching key,
+  // because we do not want to add the same key
   do{
     lkv = (kv_s*)(mdat + intkvoffset);
     if(check_keys_match(lkv, key)){
@@ -308,6 +322,10 @@ static int write_newindex(char* mdat,
 			  const char* key, const char* val,
 			  uint32_t hash, uint32_t kvlocoffset){  
   kidx_s* newidx = NULL;
+  // see if there is a previous entry with same key
+  // if there is do not write anything/return 0 adds
+  // if no-keys match, either add it as the first kv record,
+  // or add it at the end of the chain for the same hash
   if(is_hash_already_populated(mdat, hash)>0){
     // there is already a key with same hash
     uint32_t currkvoffset = get_current_idxkv_offset(mdat, hash);
@@ -339,6 +357,15 @@ static int write_newindex(char* mdat,
 }
 
 
+inline static int max_reached(){
+  return (g_kv_hdr->ecount +1 > g_kv_hdr->maxecount) ? 1: 0;
+}
+
+inline static int notgood_key_value(const char* key,
+				    const char* val){
+  return (!key || !val ) ?  1: 0;
+}
+
 
 /*
  *  Add a new key - value pair to the db
@@ -346,19 +373,14 @@ static int write_newindex(char* mdat,
  *
  */
 int add(kvdb_s* db_m, const char* key, const char* val){
-  //check max reached
-  if(g_kv_hdr->ecount +1 >= g_kv_hdr->maxecount){
+  if (max_reached() || notgood_key_value(key,val)){
     return 0;
   }  
   char* mdat = get_mdat(db_m);
   uint32_t hash  = (uint32_t)fnv_32_str( (char*) key, FNV1_32_INIT);
-  hash  = resize_hash(db_m, hash);
+  hash  = resize_hash(hash);
   // get where is the correct place to write, but dont write yet 
   uint32_t kvlocoffset = get_kv_offset(mdat);
-  // see if there is a previous entry with same key
-  // if there is do not write anything/return 0 adds
-  // if no-keys match, either add it as the first kv record,
-  // or add it at the end of the chain for the same hash
   if (write_newindex(mdat, key, val, hash, kvlocoffset)){
     // wrote 1, return 1;
     return 1;
@@ -367,20 +389,16 @@ int add(kvdb_s* db_m, const char* key, const char* val){
   }
 }
 
-/*
-static void read_kv(kvdb_s* db_m, kv_s* newkv, const char* key, char** val){
 
-  // TODO same has val key differences 
-  if(0 == strncmp(key, (char*) newkv + 2*sizeof(uint32_t),  db_m->keysize)){
-    *val = malloc(sizeof(char)*db_m->valsize);
-    strncpy(*val, (char*) newkv + 2*sizeof(uint32_t) + db_m->keysize,
-	    db_m->valsize);
-    //printf("Found key %s\n", key);
-  }else{
-    //printf("Did not find key %s\n", key);
-  } 
+//copy the value of "the current kv" record to a mallocated address
+static void copy_value(kv_s* ckv, char** val_m){
+  *val_m = malloc(sizeof(char) * g_kv_hdr->valsize);
+  strncpy(*val_m,
+	  (char*) ckv + 2*sizeof(uint32_t) + g_kv_hdr->keysize,
+	  g_kv_hdr->valsize);
 }
-*/
+
+
 
 /*
  *  Given a key get the value from db
@@ -390,64 +408,94 @@ static void read_kv(kvdb_s* db_m, kv_s* newkv, const char* key, char** val){
 char* get(kvdb_s* db_m, const char* key){
   char* mdat = get_mdat(db_m);
   uint32_t hash = (uint32_t) fnv_32_str((char*) key, FNV1_32_INIT);
-  hash = resize_hash(db_m, hash);
+  hash = resize_hash(hash);
   if(is_hash_already_populated(mdat, hash)){
+    // if hashlocation is populated goto the location
     uint32_t ckvoffset =  get_current_idxkv_offset(mdat, hash);
     do{
       kv_s* ckv = (kv_s*)(mdat + ckvoffset);
       if (ckv->next != 0){
-	if(0 == strncmp(key, (char*)ckv + 2*sizeof(uint32_t),
-			db_m->keysize)){
-	  //we found a match  with key no need to serach more
-	  char* val = NULL;
-	  val = malloc(sizeof(char)*db_m->valsize);
-	  strncpy(val, (char*) ckv + 2*sizeof(uint32_t)
-		  + db_m->keysize, db_m->valsize);
+	// the next location is populated
+	// but check this key to see if they match 
+	if(check_keys_match(ckv, key)){
+	  // we found a match  with key no need to serach more
+	  char* val_m = NULL;
 	  //printf("Found key %s\n", key);
-	  return val;
+	  copy_value(ckv, &val_m);
+	  return val_m;
 	}else{
-	  // the keys did not match, bu there is next
+	  // the keys did not match, bu there is next location
 	  //lets try that
 	  ckvoffset = ckv->next;
 	  continue;
 	}
-      }else if(0 == strncmp(key, (char*)ckv + 2*sizeof(uint32_t),
-			db_m->keysize)){
-	// this is the last one and keys matched
-	char* val = NULL;
-	val = malloc(sizeof(char)*db_m->valsize);
-	strncpy(val, (char*) ckv + 2*sizeof(uint32_t)
-		+ db_m->keysize, db_m->valsize);
+      }else if(check_keys_match(ckv, key)){
+	// this is the last in the chain and keys matched
+	char* val_m = NULL;
 	//printf("Found key %s\n", key);
-	return val;
+	copy_value(ckv, &val_m);
+	return val_m;
       }else{
-	// this was the last one, and key did not match
+	// this was the last one,
+	// but the key did not match
 	return NULL;
       }	
     }while(1);
     return NULL;
   }else{
+    //if hashlocation is 0 return null immediately
     return NULL;
   }
-  //if hashlocation is 0 return null immediately
-  //if hashlocation is populated goto the location
-  //if the next location is not populated return the value 
-  //if next is populated - compare the keys
-  //if keys the same return value
-  //else  go to the next location and do the above
-  // if none of the keys matck return null
-
 }
 
 
+int set(kvdb_s* db_m, const char* key, const char* val){
+  if (notgood_key_value(key,val)){
+    return 0;
+  }  
+  char* mdat = get_mdat(db_m);
+  uint32_t hash = (uint32_t) fnv_32_str((char*) key, FNV1_32_INIT);
+  hash = resize_hash(hash);
+  if(is_hash_already_populated(mdat, hash)){
+    // if hashlocation is populated goto the location
+    uint32_t ckvoffset =  get_current_idxkv_offset(mdat, hash);
+    do{
+      kv_s* ckv = (kv_s*)(mdat + ckvoffset);
+      if (ckv->next != 0){
+	// the next location is populated
+	// but check this key to see if they match 
+	if(check_keys_match(ckv, key)){
+	  // we found a match  with key no need to serach more
+	  strncpy(get_val_ptr(ckv), val, g_kv_hdr->valsize);
+	  //printf("Found key to set %s\n", key);
+	  return 1;
+	}else{
+	  // the keys did not match, bu there is next location
+	  //lets try that
+	  ckvoffset = ckv->next;
+	  continue;
+	}
+      }else if(check_keys_match(ckv, key)){
+	// this is the last in the chain and keys matched
+	strncpy(get_val_ptr(ckv), val, g_kv_hdr->valsize);
+	//printf("Found key to set %s\n", key);
+	return 1;
+      }else{
+	// this was the last one,
+	// but the key did not match
+	return 0;
+      }	
+    }while(1);
+    return 0;
+  }else{
+    //if hashlocation is 0 return 0 immediately
+    return 0;
+  }
+}
  
 /** to do
 
 
-
-
-
-int set(kvdb_s* db_m, const char* key, const char* val);
 int del(kvdb_s* db_m, const char* key);
 
 int has(kvdb_s* db_m, const char* key);
