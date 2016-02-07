@@ -1,12 +1,21 @@
 
+
+
+
+
+export the data as json array [{"key": ..,"val":...}, ...]
+import data similar to export
+
+ability to resize database( this can be an export import job?)
+
+use auto tools for installation and build
+compile kvdb into a library
+
+
+DONE:
+
 when add :
      check to see if kidx already has data or 0
      implement chaining 
      do not add same key (set shd be used)
      
-
-use auto tools for installation and build
-compile kvdb into a library
-
-export the data as json array [{"key": ..,"val":...}, ...]
-import data similar to export

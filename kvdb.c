@@ -35,7 +35,7 @@ static kvhdr_s* g_kv_hdr;
 
 
 // initialize and write db header info to file
-static void init_kvhdr(kvhdr_s* mdat, dbsize esize, uint16_t keysize,
+static void set_kvhdr(kvhdr_s* mdat, dbsize esize, uint16_t keysize,
 		       uint16_t valsize, uint32_t maxecount,
 		       uint16_t maxscount){
   g_kv_hdr = mdat;  // start of mapped memory
@@ -110,7 +110,7 @@ kvdb_s* create_kvdb(const char* name, dbsize size,
   
   kvdb_s* db_m = initialize_db_artifacts(name, fd, mdat, keysize, valsize, size);
   kvdata_s* data_m= db_m->data;
-  init_kvhdr(data_m->mdat, data_m->esize, keysize, valsize,
+  set_kvhdr(data_m->mdat, data_m->esize, keysize, valsize,
 	     DB_SIZE_FACTOR * data_m->esize,
 	     DEL_STACK_FACTOR * data_m->esize );
 
@@ -213,8 +213,10 @@ static char* get_mdat(kvdb_s* db_m){
 
 //refit has to maximum index sie for db 
 inline static uint32_t resize_hash(uint32_t hash){
+  HANDLE(g_kv_hdr->esize <= 0, 1, ,
+	 "Aborting to preserve data integrity, \
+          unexpected esize observed in kvdb./n");
   hash %= g_kv_hdr->esize;
-  //printf("has value %u, %X\n", hash, hash);
   return hash;
 }
 
@@ -264,7 +266,7 @@ inline static int del_stack_exists(){
 static uint32_t get_deleted_location_offset(char* mdat){
   // pick up the last stack content
   kidx_s* lds =(kidx_s*) (mdat + OFFSET_STACK +
-			  g_kv_hdr->scount * sizeof(kidx_s));
+			  (g_kv_hdr->scount - 1) * sizeof(kidx_s));
   uint32_t kvlocoffset = lds->idx; 
   // reduce stack count
   g_kv_hdr->scount--;
@@ -276,13 +278,16 @@ static uint32_t get_deleted_location_offset(char* mdat){
 
 // call this to get where to write the key-value record 
 static uint32_t get_kv_offset(char* mdat){
+  uint32_t kv_offset = 0;
   if(del_stack_exists()){
     //first reuse any location that was deleted
-    return get_deleted_location_offset(mdat);
+    kv_offset = get_deleted_location_offset(mdat);
   }else{
     // nodeletions, then get the first available kv offset
-    return get_kv_fa_offset();  
+    kv_offset =  get_kv_fa_offset();  
   }
+  HANDLE(kv_offset == 0, 1, , "Abnormal kv offset noticed in kv db aborting, to preserve data integrity\n");
+  return kv_offset;
 }
 
 
@@ -324,7 +329,7 @@ static int write_newindex(char* mdat,
   kidx_s* newidx = NULL;
   // see if there is a previous entry with same key
   // if there is do not write anything/return 0 adds
-  // if no-keys match, either add it as the first kv record,
+  // if no-existing-keys match, either add it as the first kv record,
   // or add it at the end of the chain for the same hash
   if(is_hash_already_populated(mdat, hash)>0){
     // there is already a key with same hash
@@ -332,7 +337,7 @@ static int write_newindex(char* mdat,
     // follow the kv-chain and populate to last one's next  field
     kv_s* lkv = NULL;
     uint32_t lkvoffset = 0;
-    if((lkvoffset = get_last_kv_offset(mdat, key, currkvoffset))){
+    if( (lkvoffset = get_last_kv_offset(mdat, key, currkvoffset)) ){
       //we have the offset for new kv record
       // we also have the last kv record
       lkv = (kv_s*)(mdat + lkvoffset);
@@ -378,6 +383,7 @@ int add(kvdb_s* db_m, const char* key, const char* val){
   }  
   char* mdat = get_mdat(db_m);
   uint32_t hash  = (uint32_t)fnv_32_str( (char*) key, FNV1_32_INIT);
+  //printf("header esize is %d\n",g_kv_hdr->esize);  
   hash  = resize_hash(hash);
   // get where is the correct place to write, but dont write yet 
   uint32_t kvlocoffset = get_kv_offset(mdat);
@@ -418,7 +424,7 @@ char* get(kvdb_s* db_m, const char* key){
 	// the next location is populated
 	// but check this key to see if they match 
 	if(check_keys_match(ckv, key)){
-	  // we found a match  with key no need to serach more
+	  // we found a match  with key no need to search more
 	  char* val_m = NULL;
 	  //printf("Found key %s\n", key);
 	  copy_value(ckv, &val_m);
@@ -449,6 +455,12 @@ char* get(kvdb_s* db_m, const char* key){
 }
 
 
+
+/*
+ *  Given a key and value set the value in db
+ *
+ *
+ */
 int set(kvdb_s* db_m, const char* key, const char* val){
   if (notgood_key_value(key,val)){
     return 0;
@@ -465,7 +477,7 @@ int set(kvdb_s* db_m, const char* key, const char* val){
 	// the next location is populated
 	// but check this key to see if they match 
 	if(check_keys_match(ckv, key)){
-	  // we found a match  with key no need to serach more
+	  // we found a match  with key no need to search more
 	  strncpy(get_val_ptr(ckv), val, g_kv_hdr->valsize);
 	  //printf("Found key to set %s\n", key);
 	  return 1;
@@ -492,11 +504,143 @@ int set(kvdb_s* db_m, const char* key, const char* val){
     return 0;
   }
 }
- 
+
+
+//
+static void update_idx_kv_links(char* mdat, uint32_t hash,
+			   uint32_t pkvoffset, uint32_t dkvoffset,
+			   uint32_t nkvoffset){
+  kv_s* dkv = (kv_s*) (mdat + dkvoffset);
+  if(pkvoffset){
+    //there is a previous kv in the chain before dkv
+    if(nkvoffset){
+      // there is also a next kv
+      kv_s* pkv = (kv_s*) (mdat + pkvoffset);
+      pkv->next = nkvoffset;
+      kv_s* nkv = (kv_s*) (mdat + nkvoffset);
+      nkv->prev = pkvoffset;
+    }else{
+      // no next kv we are deleting last in kv chain
+      kv_s* pkv = (kv_s*) (mdat + pkvoffset);
+      pkv->next = 0;
+    }
+  }else{
+    // nothing previous, dkv is the first in kv chain
+    if(nkvoffset){
+      //there is a next one after this first dkv
+      kidx_s* idxkv =(kidx_s*) (mdat + get_kidx_offset(hash));
+      idxkv->idx = nkvoffset;
+      kv_s* nkv = (kv_s*) (mdat + nkvoffset);
+      nkv->prev = 0;
+    }else{
+      // this is the first and the only one
+      kidx_s* idxkv =(kidx_s*) (mdat + get_kidx_offset(hash));
+      idxkv->idx = 0;
+    }
+  }
+  //reset the dkv data area
+  dkv->prev = 0;
+  dkv->next = 0;
+  strncpy(get_key_ptr(dkv), "", g_kv_hdr->keysize);
+  strncpy(get_val_ptr(dkv), "", g_kv_hdr->valsize);
+}
+
+
+//
+static int add_to_del_stack(char* mdat, uint32_t dkvoffset){
+  HANDLE( g_kv_hdr->scount + 1 > g_kv_hdr->maxscount,
+	  0, return 0,
+	  "Trying to delete more than elements in the db - not expected");
+
+  kidx_s* nds =(kidx_s*) (mdat + OFFSET_STACK +
+			  g_kv_hdr->scount * sizeof(kidx_s));
+  nds->idx = dkvoffset;
+  g_kv_hdr->scount++;
+  g_kv_hdr->ecount--;
+  return 1;
+}
+
+
+/*
+ *  Given a key delete the key-value record from db
+ *
+ *
+ */
+int del(kvdb_s* db_m, const char* key){
+  if (!key){
+    return 0;
+  }  
+  char* mdat = get_mdat(db_m);
+  uint32_t hash = (uint32_t) fnv_32_str((char*) key, FNV1_32_INIT);
+  hash = resize_hash(hash);
+  if(is_hash_already_populated(mdat, hash)){
+    // if hashlocation is populated goto the location
+    uint32_t ckvoffset = get_current_idxkv_offset(mdat, hash);
+    uint32_t pkvoffset = 0;
+    uint32_t nkvoffset = 0;
+    do{
+      kv_s* ckv = (kv_s*)(mdat + ckvoffset);
+      nkvoffset = ckv->next;
+      if (ckv->next != 0){
+	// the next location is populated
+	// but check this key to see if they match 
+	if(check_keys_match(ckv, key)){
+	  // we found a match  with key no need to search more
+	  // lets delete if we can add to location to del stack
+	  if(add_to_del_stack(mdat, ckvoffset)){
+	    //was able to increase delete stack
+	    update_idx_kv_links(mdat, hash, pkvoffset, ckvoffset, nkvoffset);
+	    return 1;
+	  }else{
+	    return 0;
+	  }
+	}else{
+	  // the keys did not match, bu there is next location
+	  //lets try that
+	  pkvoffset = ckvoffset;
+	  ckvoffset = ckv->next;
+	  continue;
+	}
+      }else if(check_keys_match(ckv, key)){
+	// this is the last in the chain and keys matched
+	if(add_to_del_stack(mdat, ckvoffset)){
+	  //was able to increase delete stack
+	  update_idx_kv_links(mdat, hash, pkvoffset, ckvoffset, nkvoffset);
+	  return 1;
+	}else{
+	  return 0;
+	}
+      }else{
+	// this was the last one,
+	// but the key did not match
+	return 0;
+      }	
+    }while(1);
+    return 0;
+  }else{
+    //if hashlocation is 0 return 0 immediately
+    return 0;
+  }
+}
+
+
+/*
+ *  Return the numbers of keys (and hence values) stored
+ *
+ *
+ */
+int count(){
+  return g_kv_hdr->ecount;
+}
+
 /** to do
 
+int has(kvdb_s* db_m, const char* key){
 
-int del(kvdb_s* db_m, const char* key);
+}
 
-int has(kvdb_s* db_m, const char* key);
+
+
+
+
 **/
