@@ -13,7 +13,6 @@
 // and the has maximum value  //??? is this duplicate is this ever used?
 typedef struct{
   int fd;
-  dbsize esize;
   void* mdat;
 } kvdata_s;
 
@@ -26,13 +25,15 @@ typedef struct{
 // after a program is done with using and disconnects
 // the information is used for load method
 typedef struct{
-  dbsize esize;       // hash max size # of items
+  const char fluff[128]; 
+  dbsize hashsize;       // hash max size # of items
   uint16_t keysize;   // key size in # of chars
   uint16_t valsize;   // val  size in # of chars
   uint32_t ecount;    // CURRENT # of items in kv area 
   uint32_t scount;    // CURRENT # of items in del stack
   uint32_t maxecount; // maximum adds/elements before db runs out of space 
-  uint32_t maxscount; // maximum deletions before del-stack runs out of space  
+  uint32_t maxscount; // maximum deletions before del-stack runs out of space
+  uint32_t flen; 
 } kvhdr_s;
 
 

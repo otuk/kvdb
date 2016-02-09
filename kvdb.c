@@ -35,17 +35,18 @@ static kvhdr_s* g_kv_hdr;
 
 
 // initialize and write db header info to file
-static void set_kvhdr(kvhdr_s* mdat, dbsize esize, uint16_t keysize,
+static void set_kvhdr(kvhdr_s* mdat, dbsize hashsize, uint16_t keysize,
 		       uint16_t valsize, uint32_t maxecount,
-		       uint16_t maxscount){
+		      uint32_t maxscount, uint32_t flen){
   g_kv_hdr = mdat;  // start of mapped memory
-  g_kv_hdr->esize = esize; // hash max size 
+  g_kv_hdr->hashsize = hashsize; // hash max size 
   g_kv_hdr->keysize = keysize; 
   g_kv_hdr->valsize = valsize;
   g_kv_hdr->ecount = 0; //current stored element count
   g_kv_hdr->scount = 0; //available deleted location count 
   g_kv_hdr->maxecount = maxecount; //max db storage allowance
-  g_kv_hdr->maxscount = maxscount; //max delete stack allowance 
+  g_kv_hdr->maxscount = maxscount; //max delete stack allowance
+  g_kv_hdr->flen = flen;
 }
 
 
@@ -69,7 +70,7 @@ static void calculate_constants(dbsize size, uint16_t keysize,
 //initializes enveloping and opaque structures 
 static kvdb_s* initialize_db_artifacts(const char* name, int fd,
 				       kvdata_s* mdat, uint16_t keysize,
-				       uint16_t valsize, dbsize size){
+				       uint16_t valsize, dbsize hashsize){
   kvdb_s* db_m = malloc(sizeof(kvdb_s));
   HANDLE(!db_m, 0, return NULL,
 	 "Cannot allocate memory for kvdb_s.\n");
@@ -82,8 +83,7 @@ static kvdb_s* initialize_db_artifacts(const char* name, int fd,
   db_m->data = data_m;   
 
   data_m->fd = fd;
-  data_m->esize = size;
-  data_m->mdat = mdat;
+    data_m->mdat = mdat;
   return db_m;
 }
 
@@ -99,7 +99,7 @@ kvdb_s* create_kvdb(const char* name, dbsize size,
   HANDLE(fd < 0, 0, return NULL,
 	 "Cannot create file for kvdb_s for RW access %s\n", name);
   calculate_constants(size, keysize, valsize);
-  size_t len = OFFSET_KV + ( DB_SIZE_FACTOR * size * KVR_SIZE);
+  uint32_t len = OFFSET_KV + ( DB_SIZE_FACTOR * size * KVR_SIZE);
   ftruncate(fd, len);
 
   void* mdat = mmap(NULL, len,
@@ -110,9 +110,13 @@ kvdb_s* create_kvdb(const char* name, dbsize size,
   
   kvdb_s* db_m = initialize_db_artifacts(name, fd, mdat, keysize, valsize, size);
   kvdata_s* data_m= db_m->data;
-  set_kvhdr(data_m->mdat, data_m->esize, keysize, valsize,
-	     DB_SIZE_FACTOR * data_m->esize,
-	     DEL_STACK_FACTOR * data_m->esize );
+  set_kvhdr(data_m->mdat, size, keysize, valsize,
+	    DB_SIZE_FACTOR * size,
+	    DEL_STACK_FACTOR * size,
+	    len);
+
+  printf("set maxscount %u\n", DEL_STACK_FACTOR * size);
+  printf("set maxscount %u\n", g_kv_hdr->maxscount);
 
   return db_m;  
 }
@@ -121,6 +125,16 @@ kvdb_s* create_kvdb(const char* name, dbsize size,
 // simply point the hdr pointer to the start of mapped memory
 static void read_into_header(kvhdr_s* mdat){
   g_kv_hdr = mdat;
+  printf("loaded maxscount %u\n", g_kv_hdr->maxscount);
+  printf("loaded scount %u\n", g_kv_hdr->scount);
+  printf("loaded maxecount %u\n", g_kv_hdr->maxecount);
+  printf("loaded ecount %u\n", g_kv_hdr->ecount);
+  printf("loaded keysize %u\n", g_kv_hdr->keysize);
+  printf("loaded valsize %u\n", g_kv_hdr->valsize);
+  printf("loaded hashsize %u\n", g_kv_hdr->hashsize);
+  printf("loaded flen %u\n", g_kv_hdr->flen);
+  
+  
 }
 
 
@@ -146,12 +160,13 @@ kvdb_s* load_kvdb(const char* name){
 	 "Cannot map memory for kvdb data_m.\n");
   
   read_into_header(mdat);
-  calculate_constants(g_kv_hdr->esize, g_kv_hdr->keysize,
+
+  calculate_constants(g_kv_hdr->hashsize, g_kv_hdr->keysize,
 		      g_kv_hdr->valsize);
   kvdb_s* db_m = initialize_db_artifacts(name, fd, mdat,
 					 g_kv_hdr->keysize,
 					 g_kv_hdr->valsize,
-					 g_kv_hdr->esize);
+					 g_kv_hdr->hashsize);
 
   return db_m;  
 }
@@ -165,14 +180,15 @@ kvdb_s* load_kvdb(const char* name){
  */
 int disconnect_kvdb(kvdb_s* db_m){
   if(db_m){
+    printf(" before disconnect %u\n",g_kv_hdr->maxscount);
     if(db_m->name){
       free((void*) db_m->name);
     }
     kvdata_s* data_m = (kvdata_s*) db_m->data; 
     if (data_m){
       if (data_m->mdat){
-	munmap(data_m->mdat, data_m->esize);
-	//msync()?
+	msync(data_m->mdat, g_kv_hdr->flen, MS_SYNC);
+	munmap(data_m->mdat, g_kv_hdr->flen);
       }
       if(data_m->fd > 0){ 	
 	close(data_m->fd);
@@ -213,10 +229,10 @@ static char* get_mdat(kvdb_s* db_m){
 
 //refit has to maximum index sie for db 
 inline static uint32_t resize_hash(uint32_t hash){
-  HANDLE(g_kv_hdr->esize <= 0, 1, ,
+  HANDLE(g_kv_hdr->hashsize <= 0, 1, ,
 	 "Aborting to preserve data integrity, \
-          unexpected esize observed in kvdb./n");
-  hash %= g_kv_hdr->esize;
+          unexpected hashsize observed in kvdb./n");
+  hash %= g_kv_hdr->hashsize;
   return hash;
 }
 
@@ -383,7 +399,7 @@ int add(kvdb_s* db_m, const char* key, const char* val){
   }  
   char* mdat = get_mdat(db_m);
   uint32_t hash  = (uint32_t)fnv_32_str( (char*) key, FNV1_32_INIT);
-  //printf("header esize is %d\n",g_kv_hdr->esize);  
+  //printf("header hashsize is %d\n",g_kv_hdr->hashsize);  
   hash  = resize_hash(hash);
   // get where is the correct place to write, but dont write yet 
   uint32_t kvlocoffset = get_kv_offset(mdat);
@@ -548,10 +564,13 @@ static void update_idx_kv_links(char* mdat, uint32_t hash,
 
 //
 static int add_to_del_stack(char* mdat, uint32_t dkvoffset){
+  if (g_kv_hdr->scount + 1 > g_kv_hdr->maxscount){
+    fprintf(stderr,"scount maxscount %u , %u \n",g_kv_hdr->scount, g_kv_hdr->maxscount);
+    fprintf(stderr,"ecount maxecount %u , %u \n",g_kv_hdr->ecount, g_kv_hdr->maxecount);
+  }
   HANDLE( g_kv_hdr->scount + 1 > g_kv_hdr->maxscount,
 	  0, return 0,
 	  "Trying to delete more than elements in the db - not expected");
-
   kidx_s* nds =(kidx_s*) (mdat + OFFSET_STACK +
 			  g_kv_hdr->scount * sizeof(kidx_s));
   nds->idx = dkvoffset;

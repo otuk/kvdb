@@ -4,11 +4,12 @@
 #include <string.h> //memset.h
 #include <assert.h>
 
-#define TDB_SIZE XSMALL
-#define TDB_KEYSIZE 128
-#define TDB_VALSIZE 256
-
 #define TEST_VERBOSE 1
+#define TEST_EXIT exit(1)
+
+#define TDB_SIZE LARGE
+#define TDB_KEYSIZE 30
+#define TDB_VALSIZE 31
 
 #define ZEROLENVAL_KEY  "Zerolen Value's key%d"
 #define ZEROLENKEY_VAL  "zero length key's value"
@@ -433,13 +434,15 @@ int main(int argc, char *argv[])
   test_get_minikv(kdb);
   test_get_nonexistent_key(kdb);
   test_add_null_key(kdb);
+
   test_add_null_val(kdb);
   test_add_zerolen_key(kdb); //ads 1
   test_add_zerolen_val(kdb); //adds 5
   test_count(9);
   test_get_zerolen_val(kdb);
-  test_get_zerolen_key(kdb);
 
+  test_get_zerolen_key(kdb);
+  
   int LOADSIZE = (2 * TDB_SIZE) - 9; // set to max it
   test_add_many(kdb, LOADSIZE); // adds loadsize many
   test_count(LOADSIZE+9);
@@ -484,7 +487,18 @@ int main(int argc, char *argv[])
   test_del_zerolen_val(kdb); //deletes 3
   test_del_zerolen_key(kdb);  //deletes 1
   test_count(0);
-  
+  test_disconnect(kdb);
+  kdb = NULL;
+
+  LOADSIZE = 2 * TDB_SIZE;
+  kdb = test_load_database(name);
+  test_add_many(kdb, LOADSIZE);
+  test_get_many(kdb, LOADSIZE);
+  test_set_many(kdb, LOADSIZE);
+  test_get_afterset_many(kdb, LOADSIZE);
+  test_count(LOADSIZE);
+  test_del_many(kdb, LOADSIZE);
+  test_count(0);
   test_disconnect(kdb);
   kdb = NULL;
   

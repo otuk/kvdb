@@ -1,17 +1,21 @@
-
-
-
-
+============================================================
+TODO
 
 export the data as json array [{"key": ..,"val":...}, ...]
 import data similar to export
-
 ability to resize database( this can be an export import job?)
+
+
+encrypt stored data with a key
+
+multi-thread implementation with event loop/listener single stream.
 
 use auto tools for installation and build
 compile kvdb into a library
 
 
+
+============================================================
 DONE:
 
 when add :
@@ -19,3 +23,10 @@ when add :
      implement chaining 
      do not add same key (set shd be used)
      
+
+
+
+=============================================================
+KNOWN ISSUES
+- networked mapped or shared VM files had issues due to permissions or fstat
+
