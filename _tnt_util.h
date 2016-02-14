@@ -12,8 +12,8 @@ extern char abortset;
     if (! myerrorstream)						\
       myerrorstream = stderr;						\
     char msg[TNT_ERRMSG_SIZE]={0};					\
-    strerror_r(ei, msg, TNT_ERRMSG_SIZE);				\
-    fprintf(myerrorstream, "%s:%d-ERR:%d %s\n", __FILE__, __LINE__, ei, msg); \
+    char* rmsg = strerror_r(ei, msg, TNT_ERRMSG_SIZE);			\
+    fprintf(myerrorstream,"%s:%d-ERR:%d %s\n", __FILE__, __LINE__, ei, rmsg); \
     fprintf(myerrorstream, __VA_ARGS__ );				\
   }while(0);								\
 

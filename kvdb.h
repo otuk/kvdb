@@ -26,13 +26,13 @@ kvdb_s* create_kvdb(const char* name, dbsize size,
 kvdb_s* load_kvdb(const char* name);
 int     disconnect_kvdb(kvdb_s* db);
 
-int add(kvdb_s* db, const char* key, const char* val);
-int set(kvdb_s* db, const char* key, const char* val);
-int del(kvdb_s* db, const char* key);
-char* get(kvdb_s* db, const char* key);
+int add_kvdb(kvdb_s* db, const char* key, const char* val);
+int set_kvdb(kvdb_s* db, const char* key, const char* val);
+int del_kvdb(kvdb_s* db, const char* key);
+char* get_kvdb(kvdb_s* db, const char* key);
 
-int count();
-char* name(kvdb_s* db);
+int count_kvdb();
+char* name_kvdb(kvdb_s* db);
 
 
 #endif

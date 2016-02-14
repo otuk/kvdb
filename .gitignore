@@ -3,3 +3,6 @@
 *~
 test_kvdb
 *.db
+kvdb.profile
+gmon.out
+

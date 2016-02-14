@@ -1,4 +1,3 @@
-
 #include <sys/types.h>  //open ftruncate
 #include <sys/stat.h>  //open
 #include <fcntl.h>  //open
@@ -100,7 +99,9 @@ kvdb_s* create_kvdb(const char* name, dbsize size,
 	 "Cannot create file for kvdb_s for RW access %s\n", name);
   calculate_constants(size, keysize, valsize);
   uint32_t len = OFFSET_KV + ( DB_SIZE_FACTOR * size * KVR_SIZE);
-  ftruncate(fd, len);
+  int ret = ftruncate(fd, len);
+  HANDLE(ret != 0, 0, return NULL,
+	 "Cannot resize the db file.\n");
 
   void* mdat = mmap(NULL, len,
 		    PROT_READ | PROT_WRITE, MAP_FILE | MAP_SHARED,
@@ -115,16 +116,10 @@ kvdb_s* create_kvdb(const char* name, dbsize size,
 	    DEL_STACK_FACTOR * size,
 	    len);
 
-  printf("set maxscount %u\n", DEL_STACK_FACTOR * size);
-  printf("set maxscount %u\n", g_kv_hdr->maxscount);
-
   return db_m;  
 }
 
-
-// simply point the hdr pointer to the start of mapped memory
-static void read_into_header(kvhdr_s* mdat){
-  g_kv_hdr = mdat;
+void print_kvdb_header(){
   printf("loaded maxscount %u\n", g_kv_hdr->maxscount);
   printf("loaded scount %u\n", g_kv_hdr->scount);
   printf("loaded maxecount %u\n", g_kv_hdr->maxecount);
@@ -133,8 +128,11 @@ static void read_into_header(kvhdr_s* mdat){
   printf("loaded valsize %u\n", g_kv_hdr->valsize);
   printf("loaded hashsize %u\n", g_kv_hdr->hashsize);
   printf("loaded flen %u\n", g_kv_hdr->flen);
-  
-  
+}
+
+// simply point the hdr pointer to the start of mapped memory
+static void read_into_header(kvhdr_s* mdat){
+  g_kv_hdr = mdat;
 }
 
 
@@ -180,7 +178,6 @@ kvdb_s* load_kvdb(const char* name){
  */
 int disconnect_kvdb(kvdb_s* db_m){
   if(db_m){
-    printf(" before disconnect %u\n",g_kv_hdr->maxscount);
     if(db_m->name){
       free((void*) db_m->name);
     }
@@ -202,14 +199,8 @@ int disconnect_kvdb(kvdb_s* db_m){
 }
 
 
-//
-static void add_hdr_count(){
-  g_kv_hdr->ecount++;
-}
-
-
 //get the index location (that will store  the kvoffset for hash)
-static uint32_t get_kidx_offset(uint32_t hash){
+inline static uint32_t get_kidx_offset(uint32_t hash){
   return (hash*sizeof(kidx_s)) + OFFSET_KIDX;
 }
 
@@ -253,9 +244,9 @@ static void write_newkv(kv_s* newkv,
 			uint32_t prev){
   newkv->prev = prev;
   newkv->next = 0;
-  strncpy(get_key_ptr(newkv), key, g_kv_hdr->keysize);
-  strncpy(get_val_ptr(newkv), val, g_kv_hdr->valsize);
-  add_hdr_count();   
+  strncpy(get_key_ptr(newkv), key, g_kv_hdr->keysize -1);
+  strncpy(get_val_ptr(newkv), val, g_kv_hdr->valsize -1);
+  g_kv_hdr->ecount++;
 }
 
 
@@ -267,7 +258,7 @@ static uint32_t get_current_idxkv_offset(char* mdat, uint32_t hash){
   
 
 // returns 1 if the idx location has anything but 0
-static int is_hash_already_populated(char* mdat, uint32_t hash){
+inline static int is_hash_already_populated(char* mdat, uint32_t hash){
   return get_current_idxkv_offset(mdat, hash) ==0 ? 0: 1;
 }
 
@@ -323,6 +314,7 @@ static uint32_t get_last_kv_offset(char* mdat, const char* key,
   // follow the kv chain to the end
   // but return 0 if there is a matching key,
   // because we do not want to add the same key
+  int counter = 0;
   do{
     lkv = (kv_s*)(mdat + intkvoffset);
     if(check_keys_match(lkv, key)){
@@ -333,8 +325,9 @@ static uint32_t get_last_kv_offset(char* mdat, const char* key,
     }else{
       intkvoffset = lkv->next;
     }  
-  }while(1);
-  return 0;
+  }while( ++counter <= g_kv_hdr->ecount);
+  HANDLE(1, 0, return 0,
+	 "Unexpected result, did not find the end of kv chain");
 }
 
 
@@ -384,7 +377,9 @@ inline static int max_reached(){
 
 inline static int notgood_key_value(const char* key,
 				    const char* val){
-  return (!key || !val ) ?  1: 0;
+  return ( !key || !val
+	   || strlen(key) > (g_kv_hdr->keysize -1)
+	   || strlen(val) > (g_kv_hdr->valsize -1) ) ?  1: 0;
 }
 
 
@@ -393,15 +388,14 @@ inline static int notgood_key_value(const char* key,
  *
  *
  */
-int add(kvdb_s* db_m, const char* key, const char* val){
+int add_kvdb(kvdb_s* db_m, const char* key, const char* val){
   if (max_reached() || notgood_key_value(key,val)){
     return 0;
   }  
   char* mdat = get_mdat(db_m);
   uint32_t hash  = (uint32_t)fnv_32_str( (char*) key, FNV1_32_INIT);
-  //printf("header hashsize is %d\n",g_kv_hdr->hashsize);  
   hash  = resize_hash(hash);
-  // get where is the correct place to write, but dont write yet 
+  // get the best place to write, but dont write yet 
   uint32_t kvlocoffset = get_kv_offset(mdat);
   if (write_newindex(mdat, key, val, hash, kvlocoffset)){
     // wrote 1, return 1;
@@ -415,9 +409,7 @@ int add(kvdb_s* db_m, const char* key, const char* val){
 //copy the value of "the current kv" record to a mallocated address
 static void copy_value(kv_s* ckv, char** val_m){
   *val_m = malloc(sizeof(char) * g_kv_hdr->valsize);
-  strncpy(*val_m,
-	  (char*) ckv + 2*sizeof(uint32_t) + g_kv_hdr->keysize,
-	  g_kv_hdr->valsize);
+  strncpy(*val_m, get_val_ptr(ckv), g_kv_hdr->valsize -1);
 }
 
 
@@ -427,13 +419,14 @@ static void copy_value(kv_s* ckv, char** val_m){
  *
  *
  */
-char* get(kvdb_s* db_m, const char* key){
+char* get_kvdb(kvdb_s* db_m, const char* key){
   char* mdat = get_mdat(db_m);
   uint32_t hash = (uint32_t) fnv_32_str((char*) key, FNV1_32_INIT);
   hash = resize_hash(hash);
   if(is_hash_already_populated(mdat, hash)){
     // if hashlocation is populated goto the location
     uint32_t ckvoffset =  get_current_idxkv_offset(mdat, hash);
+    int counter = 0;
     do{
       kv_s* ckv = (kv_s*)(mdat + ckvoffset);
       if (ckv->next != 0){
@@ -462,8 +455,9 @@ char* get(kvdb_s* db_m, const char* key){
 	// but the key did not match
 	return NULL;
       }	
-    }while(1);
-    return NULL;
+    }while( ++counter <= g_kv_hdr->ecount);
+    HANDLE(1, 0, return NULL,
+	   "Unexpected, get did not find the end of kv chain");
   }else{
     //if hashlocation is 0 return null immediately
     return NULL;
@@ -477,7 +471,7 @@ char* get(kvdb_s* db_m, const char* key){
  *
  *
  */
-int set(kvdb_s* db_m, const char* key, const char* val){
+int set_kvdb(kvdb_s* db_m, const char* key, const char* val){
   if (notgood_key_value(key,val)){
     return 0;
   }  
@@ -487,6 +481,7 @@ int set(kvdb_s* db_m, const char* key, const char* val){
   if(is_hash_already_populated(mdat, hash)){
     // if hashlocation is populated goto the location
     uint32_t ckvoffset =  get_current_idxkv_offset(mdat, hash);
+    int counter = 0;
     do{
       kv_s* ckv = (kv_s*)(mdat + ckvoffset);
       if (ckv->next != 0){
@@ -494,7 +489,7 @@ int set(kvdb_s* db_m, const char* key, const char* val){
 	// but check this key to see if they match 
 	if(check_keys_match(ckv, key)){
 	  // we found a match  with key no need to search more
-	  strncpy(get_val_ptr(ckv), val, g_kv_hdr->valsize);
+	  strncpy(get_val_ptr(ckv), val, g_kv_hdr->valsize -1);
 	  //printf("Found key to set %s\n", key);
 	  return 1;
 	}else{
@@ -505,7 +500,7 @@ int set(kvdb_s* db_m, const char* key, const char* val){
 	}
       }else if(check_keys_match(ckv, key)){
 	// this is the last in the chain and keys matched
-	strncpy(get_val_ptr(ckv), val, g_kv_hdr->valsize);
+	strncpy(get_val_ptr(ckv), val, g_kv_hdr->valsize -1);
 	//printf("Found key to set %s\n", key);
 	return 1;
       }else{
@@ -513,8 +508,9 @@ int set(kvdb_s* db_m, const char* key, const char* val){
 	// but the key did not match
 	return 0;
       }	
-    }while(1);
-    return 0;
+    }while( ++counter <= g_kv_hdr->ecount);
+    HANDLE(1, 0, return 0,
+	   "Unexpected, set did not find the end of kv chain");
   }else{
     //if hashlocation is 0 return 0 immediately
     return 0;
@@ -557,20 +553,17 @@ static void update_idx_kv_links(char* mdat, uint32_t hash,
   //reset the dkv data area
   dkv->prev = 0;
   dkv->next = 0;
-  strncpy(get_key_ptr(dkv), "", g_kv_hdr->keysize);
-  strncpy(get_val_ptr(dkv), "", g_kv_hdr->valsize);
+  strncpy(get_key_ptr(dkv), "", g_kv_hdr->keysize -1);
+  strncpy(get_val_ptr(dkv), "", g_kv_hdr->valsize -1);
 }
 
 
 //
 static int add_to_del_stack(char* mdat, uint32_t dkvoffset){
-  if (g_kv_hdr->scount + 1 > g_kv_hdr->maxscount){
-    fprintf(stderr,"scount maxscount %u , %u \n",g_kv_hdr->scount, g_kv_hdr->maxscount);
-    fprintf(stderr,"ecount maxecount %u , %u \n",g_kv_hdr->ecount, g_kv_hdr->maxecount);
-  }
   HANDLE( g_kv_hdr->scount + 1 > g_kv_hdr->maxscount,
 	  0, return 0,
-	  "Trying to delete more than elements in the db - not expected");
+	  "Trying to delete more than elements in the db - not expected\n. \
+           stack: %u max: %u\n", g_kv_hdr->scount, g_kv_hdr->maxscount);
   kidx_s* nds =(kidx_s*) (mdat + OFFSET_STACK +
 			  g_kv_hdr->scount * sizeof(kidx_s));
   nds->idx = dkvoffset;
@@ -585,7 +578,7 @@ static int add_to_del_stack(char* mdat, uint32_t dkvoffset){
  *
  *
  */
-int del(kvdb_s* db_m, const char* key){
+int del_kvdb(kvdb_s* db_m, const char* key){
   if (!key){
     return 0;
   }  
@@ -597,6 +590,7 @@ int del(kvdb_s* db_m, const char* key){
     uint32_t ckvoffset = get_current_idxkv_offset(mdat, hash);
     uint32_t pkvoffset = 0;
     uint32_t nkvoffset = 0;
+    int counter =0;
     do{
       kv_s* ckv = (kv_s*)(mdat + ckvoffset);
       nkvoffset = ckv->next;
@@ -634,8 +628,9 @@ int del(kvdb_s* db_m, const char* key){
 	// but the key did not match
 	return 0;
       }	
-    }while(1);
-    return 0;
+    }while( ++counter <= g_kv_hdr->ecount);
+    HANDLE(1, 0, return 0,
+	   "Unexpected, del did not find the end of kv chain");
   }else{
     //if hashlocation is 0 return 0 immediately
     return 0;
@@ -648,17 +643,20 @@ int del(kvdb_s* db_m, const char* key){
  *
  *
  */
-int count(){
+int count_kvdb(){
   return g_kv_hdr->ecount;
 }
 
+
+
 /** to do
+char name(kvdb_s* db_m);
+
+export data to file
 
 int has(kvdb_s* db_m, const char* key){
 
 }
-
-
 
 
 

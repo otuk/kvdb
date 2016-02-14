@@ -1,16 +1,30 @@
-# build kvdb library and tests
+# build kvdb and tests
 
 TARGET=test_kvdb
 
 CC=gcc
-CFLAGS = -std=c11 -g -Wall -Werror -O0
+OPTIMIZE = -O0
+prod: OPTIMIZE = -O3
+PROFILE =
+prof: PROFILE = -pg # for gprof profiling
+CFLAGS = $(PROFILE) -std=c11 -g -Wall -Werror $(OPTIMIZE) 
 CFLAGS += -D_GNU_SOURCE # needed for ftruncate & MAP_FILE on linux
 #CFLAGS += -fprofile-arcs -ftest-coverage
 OBJECTS = $(TARGET).o kvdb.o hash_32.o
-LDFLAGS =
+LDFLAGS =  $(PROFILE)  
 LDLIBS = 
 
+
+
 all: $(TARGET)
+
+prod: all
+
+prof: cleand all
+	./$(TARGET)
+	gprof ./$(TARGET) > kvdb.profile
+	cat ./kvdb.profile | less
+
 
 $(TARGET): $(OBJECTS)
 
@@ -18,18 +32,24 @@ clean:
 	rm -f ./$(TARGET)
 	rm -f ./*.o
 
+
 # clean the test database created
 cleand: clean
-	rm -f ./*.db
+	rm -f ./kv001.db
+	rm -f ~/kv001.db
+	rm -f ./gmon.out
+	rm -f ./*.profile
 
 memchk: all
-	valgrind --dsymutil=yes --track-origins=yes --leak-check=full ./$(TARGET)
+	valgrind --dsymutil=yes --track-origins=yes \
+                 --leak-check=full ./$(TARGET)
 
 run:
 	./$(TARGET)
 
 
-# add install
+# gprof - build with profile, run and open results
+# gcov - build with coverage , run tests, display coverage
+# install?
 # add debug differences
-# add optimizer differences
 #
