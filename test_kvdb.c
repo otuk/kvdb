@@ -13,7 +13,7 @@
 
 #define ZEROLENVAL_KEY  "Zerolen Value's key%d"
 #define ZEROLENKEY_VAL  "zero length key's value"
-#define UPD_ZEROLENKEY_VAL  "Updated zerolength key's value"
+#define UPD_ZEROLENKEY_VAL  "Updated zerolength key'svalue"
 #define ZLVSIZE 5
 
 int g_teststep = 0;
@@ -81,7 +81,7 @@ int test_get_nonexistent_key(kvdb_s* kdb){
   int i =0;
   for (; i<DATASIZE; i++){
     char key[256]={0};
-    snprintf(key, 256, "abcd-xyz-abcd-this is not in db %d", i);
+    snprintf(key, 256, "-xyz this is not in db %d", i);
     char* val = get_kvdb(kdb, key);
     //printf("For key %s Got value %s\n", key, val);
     assert(NULL == val );
@@ -180,9 +180,8 @@ int test_add_many(kvdb_s* kdb, int LOADSIZE){
   for (; i<LOADSIZE; i++){
     char key[TDB_KEYSIZE]={0};
     char val[TDB_VALSIZE]={0};
-    snprintf(key, TDB_KEYSIZE, "%dkey%d-%d",i,i,i);
-    snprintf(val, TDB_VALSIZE, "VALUE(%d) = VALUE(%d) = VALUE(%d)="
-	     ,i,i,i);
+    snprintf(key, TDB_KEYSIZE, "%dkey-%d",i,i);
+    snprintf(val, TDB_VALSIZE, "VALUE=(%d)",i);
     int ret = add_kvdb(kdb, key, val);
     assert(ret == 1);
     //if (i%10000==0) printf("TEST: Wrote 1 more: %d\n", i);
@@ -196,9 +195,9 @@ int test_re_add_many(kvdb_s* kdb, int LOADSIZE){
   for (; i<LOADSIZE; i++){
     char key[TDB_KEYSIZE]={0};
     char val[TDB_VALSIZE]={0};
-    snprintf(key, TDB_KEYSIZE, "%dkey%d-%d",i,i,i);
-    snprintf(val, TDB_VALSIZE, "VALUE(%d) = VALUE(%d) = VALUE(%d)="
-	     ,i,i,i);
+    snprintf(key, TDB_KEYSIZE, "%dkey-%d", i,i);
+    snprintf(val, TDB_VALSIZE, "VALUE*(%d)", i);
+
     int ret = add_kvdb(kdb, key, val);
     //it shd not allow
     assert(ret == 0);
@@ -214,30 +213,13 @@ int test_get_many(kvdb_s* kdb, int LOADSIZE){
   for (; i<LOADSIZE; i++){
     char key[TDB_KEYSIZE]={0};
     char val[TDB_VALSIZE]={0};
-    snprintf(key, TDB_KEYSIZE, "%dkey%d-%d",i,i,i);
-    snprintf(val, TDB_VALSIZE, "VALUE(%d) = VALUE(%d) = VALUE(%d)="
-	     ,i,i,i);
+    snprintf(key, TDB_KEYSIZE, "%dkey-%d",i,i);
+    snprintf(val, TDB_VALSIZE, "VALUE=(%d)",i);
     char* retval = get_kvdb(kdb, key);
-    assert( NULL != retval);
     assert(0 == strcmp(retval, val));
     if (retval) free(retval);
   }
   if(TEST_VERBOSE) printf("Test step: %d completed\n", ++g_teststep);  
-  return i;
-}
-
-int test_set_many(kvdb_s* kdb, int LOADSIZE){
-  int i =0;
-  for (; i<LOADSIZE; i++){
-    char key[TDB_KEYSIZE]={0};
-    char val[TDB_VALSIZE]={0};
-    snprintf(key, TDB_KEYSIZE, "%dkey%d-%d",i,i,i);
-    snprintf(val, TDB_VALSIZE, "NewValue(%d) =*=", i);
-    int ret = set_kvdb(kdb, key, val);
-    assert(ret == 1);
-    //printf("TEST: Set 1 more: %d\n", i);
-  }
-  if(TEST_VERBOSE) printf("Test step: %d completed\n", ++g_teststep);
   return i;
 }
 
@@ -246,12 +228,29 @@ int test_get_afterset_many(kvdb_s* kdb, int LOADSIZE){
   for (; i<LOADSIZE; i++){
     char key[TDB_KEYSIZE]={0};
     char val[TDB_VALSIZE]={0};
-    snprintf(key, TDB_KEYSIZE, "%dkey%d-%d",i,i,i);
+    snprintf(key, TDB_KEYSIZE, "%dkey-%d",i,i);
     snprintf(val, TDB_VALSIZE, "NewValue(%d) =*=", i);
     char* retval = get_kvdb(kdb, key);
     assert(0 == strcmp(retval, val));
     if (retval) free(retval);
     //printf("TEST: Got 1 more: %d\n", i);
+  }
+  if(TEST_VERBOSE) printf("Test step: %d completed\n", ++g_teststep);
+  return i;
+}
+
+
+
+int test_set_many(kvdb_s* kdb, int LOADSIZE){
+  int i =0;
+  for (; i<LOADSIZE; i++){
+    char key[TDB_KEYSIZE]={0};
+    char val[TDB_VALSIZE]={0};
+    snprintf(key, TDB_KEYSIZE, "%dkey-%d",i,i);
+    snprintf(val, TDB_VALSIZE, "NewValue(%d) =*=", i);
+    int ret = set_kvdb(kdb, key, val);
+    assert(ret == 1);
+    //printf("TEST: Set 1 more: %d\n", i);
   }
   if(TEST_VERBOSE) printf("Test step: %d completed\n", ++g_teststep);
   return i;
@@ -364,7 +363,7 @@ int test_del_many(kvdb_s* kdb, int LOADSIZE){
   int i =0;
   for (; i<LOADSIZE; i++){
     char key[TDB_KEYSIZE]={0};
-    snprintf(key, TDB_KEYSIZE, "%dkey%d-%d",i,i,i);
+    snprintf(key, TDB_KEYSIZE, "%dkey-%d",i,i);
     int ret = del_kvdb(kdb, key);
     assert(1 == ret);
     char* retval = get_kvdb(kdb, key);
@@ -379,7 +378,7 @@ int test_get_afterdel_many(kvdb_s* kdb, int LOADSIZE){
   int i =LOADSIZE -1;
   for (; i>0; i--){
     char key[TDB_KEYSIZE]={0};
-    snprintf(key, TDB_KEYSIZE, "%dkey%d-%d",i,i,i);
+    snprintf(key, TDB_KEYSIZE, "%dkey-%d",i,i);
     char* retval = get_kvdb(kdb, key);
     assert(NULL == retval);
     if (retval) free(retval);

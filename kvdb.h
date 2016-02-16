@@ -14,9 +14,6 @@
 typedef enum {XSMALL=10000, SMALL=100000, MEDIUM=1000000, LARGE=10000000, XLARGE=100000000} dbsize;
 
 typedef struct {
-  char* name;
-  uint16_t keysize;
-  uint16_t valsize;
   void* data;
 } kvdb_s;
 
@@ -32,7 +29,7 @@ int del_kvdb(kvdb_s* db, const char* key);
 char* get_kvdb(kvdb_s* db, const char* key);
 
 int count_kvdb();
-char* name_kvdb(kvdb_s* db);
+char* get_name_kvdb(kvdb_s* db);
 
 
 #endif

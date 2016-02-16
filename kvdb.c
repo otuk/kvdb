@@ -73,16 +73,15 @@ static kvdb_s* initialize_db_artifacts(const char* name, int fd,
   kvdb_s* db_m = malloc(sizeof(kvdb_s));
   HANDLE(!db_m, 0, return NULL,
 	 "Cannot allocate memory for kvdb_s.\n");
-  db_m->name = strdup(name);
-  db_m->keysize = keysize;
-  db_m->valsize = valsize;
   kvdata_s* data_m = malloc(sizeof(kvdata_s));
   HANDLE(!data_m, 0, return NULL,
 	 "Cannot allocate memory for kvdb data_m.\n");
   db_m->data = data_m;   
-
+  data_m->name = strdup(name);
+  data_m->keysize = keysize;
+  data_m->valsize = valsize;
   data_m->fd = fd;
-    data_m->mdat = mdat;
+  data_m->mdat = mdat;
   return db_m;
 }
 
@@ -120,14 +119,14 @@ kvdb_s* create_kvdb(const char* name, dbsize size,
 }
 
 void print_kvdb_header(){
-  printf("loaded maxscount %u\n", g_kv_hdr->maxscount);
-  printf("loaded scount %u\n", g_kv_hdr->scount);
-  printf("loaded maxecount %u\n", g_kv_hdr->maxecount);
-  printf("loaded ecount %u\n", g_kv_hdr->ecount);
-  printf("loaded keysize %u\n", g_kv_hdr->keysize);
-  printf("loaded valsize %u\n", g_kv_hdr->valsize);
-  printf("loaded hashsize %u\n", g_kv_hdr->hashsize);
-  printf("loaded flen %u\n", g_kv_hdr->flen);
+  printf("maxscount %u\n", g_kv_hdr->maxscount);
+  printf("scount %u\n", g_kv_hdr->scount);
+  printf("maxecount %u\n", g_kv_hdr->maxecount);
+  printf("ecount %u\n", g_kv_hdr->ecount);
+  printf("keysize %u\n", g_kv_hdr->keysize);
+  printf("valsize %u\n", g_kv_hdr->valsize);
+  printf("hashsize %u\n", g_kv_hdr->hashsize);
+  printf("file length %u\n", g_kv_hdr->flen);
 }
 
 // simply point the hdr pointer to the start of mapped memory
@@ -178,11 +177,11 @@ kvdb_s* load_kvdb(const char* name){
  */
 int disconnect_kvdb(kvdb_s* db_m){
   if(db_m){
-    if(db_m->name){
-      free((void*) db_m->name);
-    }
     kvdata_s* data_m = (kvdata_s*) db_m->data; 
     if (data_m){
+      if(data_m->name){
+	free((void*) data_m->name);      
+      }
       if (data_m->mdat){
 	msync(data_m->mdat, g_kv_hdr->flen, MS_SYNC);
 	munmap(data_m->mdat, g_kv_hdr->flen);

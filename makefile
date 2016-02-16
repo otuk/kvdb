@@ -1,4 +1,4 @@
-# build kvdb and tests
+# build kvdb and kvdb_test
 
 TARGET=test_kvdb
 
@@ -48,8 +48,4 @@ run:
 	./$(TARGET)
 
 
-# gprof - build with profile, run and open results
-# gcov - build with coverage , run tests, display coverage
-# install?
-# add debug differences
-#
+

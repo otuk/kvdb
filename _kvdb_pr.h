@@ -12,6 +12,9 @@
 // it contains information on the file descriptor
 // and the has maximum value  //??? is this duplicate is this ever used?
 typedef struct{
+  char* name;
+  uint16_t keysize;
+  uint16_t valsize;
   int fd;
   void* mdat;
 } kvdata_s;
